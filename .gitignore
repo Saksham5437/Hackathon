@@ -1,0 +1,31 @@
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local app data
+uploads/
+voice_overviews/
+chroma_db/
+
+# Frontend
+mini-notebooklm-frontend/node_modules/
+mini-notebooklm-frontend/dist/
+mini-notebooklm-frontend/.env.local
+mini-notebooklm-frontend/.vercel/
+
+# Existing local frontend artifacts
+aura-frontend/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

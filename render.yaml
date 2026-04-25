@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: mini-notebooklm-api
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main_new:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: YOUTUBE_API_KEY
+        sync: false
+      - key: EMBEDDING_MODEL
+        value: all-MiniLM-L6-v2
+      - key: CHUNK_SIZE
+        value: 800
+      - key: CHUNK_OVERLAP
+        value: 100
+      - key: TOP_K_CHUNKS
+        value: 12
+      - key: MAX_HISTORY
+        value: 10
+      - key: LLM_MAX_OUTPUT_TOKENS
+        value: 12000
