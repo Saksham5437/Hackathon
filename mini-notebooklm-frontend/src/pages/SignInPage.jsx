@@ -30,7 +30,7 @@ export default function SignInPage() {
         <form onSubmit={submit}>
           <label>
             Username
-            <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="saksham" autoFocus />
+            <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Enter your name" autoFocus />
           </label>
           <Button type="submit">{mode === "register" ? "Register" : "Sign in"}</Button>
         </form>
