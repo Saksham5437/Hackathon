@@ -7,15 +7,15 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     try {
-      return JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY));
+      return JSON.parse(sessionStorage.getItem(AUTH_STORAGE_KEY));
     } catch {
       return null;
     }
   });
 
   useEffect(() => {
-    if (user) localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
-    else localStorage.removeItem(AUTH_STORAGE_KEY);
+    if (user) sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
+    else sessionStorage.removeItem(AUTH_STORAGE_KEY);
   }, [user]);
 
   const value = useMemo(
@@ -24,14 +24,14 @@ export function AuthProvider({ children }) {
       signIn: ({ username }) => {
         const nextUser = { username: username.trim(), signedInAt: new Date().toISOString() };
         setUser(nextUser);
-        if (!localStorage.getItem(SESSION_STORAGE_KEY)) {
-          localStorage.setItem(SESSION_STORAGE_KEY, makeSessionId(nextUser.username));
+        if (!sessionStorage.getItem(SESSION_STORAGE_KEY)) {
+          sessionStorage.setItem(SESSION_STORAGE_KEY, makeSessionId(nextUser.username));
         }
       },
       register: ({ username }) => {
         const nextUser = { username: username.trim(), createdAt: new Date().toISOString() };
         setUser(nextUser);
-        localStorage.setItem(SESSION_STORAGE_KEY, makeSessionId(nextUser.username));
+        sessionStorage.setItem(SESSION_STORAGE_KEY, makeSessionId(nextUser.username));
       },
       signOut: () => setUser(null),
     }),
