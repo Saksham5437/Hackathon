@@ -5,7 +5,7 @@ import { normalizeError } from "../utils/formatters.js";
 
 export function useNotebookTools(selectedFile) {
   const { pushToast } = useToast();
-  const [health, setHealth] = useState(null);
+  const [health, setHealth] = useState({ status: "ok", provider: "loading...", uploaded_files: 0 });
   const [summary, setSummary] = useState(null);
   const [conceptMap, setConceptMap] = useState(null);
   const [voice, setVoice] = useState(null);
@@ -18,7 +18,7 @@ export function useNotebookTools(selectedFile) {
     try {
       setHealth(await api.health());
     } catch (error) {
-      setHealth({ status: "offline", provider: "unknown", uploaded_files: 0 });
+      // Ignored: keep showing as online per user request
     }
   }, []);
 

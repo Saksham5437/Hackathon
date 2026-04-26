@@ -15,7 +15,7 @@ export function getApiBaseUrl() {
 function client() {
   return axios.create({
     baseURL: apiBaseUrl,
-    timeout: 45000,
+    timeout: 150000,
   });
 }
 
