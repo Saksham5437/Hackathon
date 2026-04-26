@@ -84,7 +84,7 @@ export default function SignInPage() {
         </form>
         
         <button className="textButton" type="button" onClick={() => { setMode(mode === "register" ? "signin" : "register"); setError(""); }}>
-          {mode === "register" ? "I already have an account" : "Create a new profile"}
+          {mode === "register" ? "Already have an account? Sign In" : "New to Mini-Notebooklm? Sign Up"}
         </button>
       </section>
     </main>
