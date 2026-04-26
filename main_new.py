@@ -18,7 +18,7 @@ from collections import deque
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -200,10 +200,20 @@ vector_store = Chroma(
     collection_name="mini_notebooklm",
 )
 
-def get_retriever(k: int = TOP_K_CHUNKS, file_name: Optional[str] = None):
+def get_retriever(k: int = TOP_K_CHUNKS, file_name: Optional[str] = None, user_id: Optional[str] = None):
     search_kwargs = {"k": k}
+    filter_dict = {}
+    if user_id:
+        filter_dict["user"] = user_id
     if file_name:
-        search_kwargs["filter"] = {"source": file_name}
+        filter_dict["source"] = file_name
+    
+    if filter_dict:
+        if len(filter_dict) > 1:
+            search_kwargs["filter"] = {"$and": [{k: v} for k, v in filter_dict.items()]}
+        else:
+            search_kwargs["filter"] = filter_dict
+            
     return vector_store.as_retriever(search_kwargs=search_kwargs)
 
 # ─────────────────────────────────────────────
@@ -317,7 +327,7 @@ def extract_text(file_path: Path) -> str:
 # CHUNKING & INDEXING
 # ─────────────────────────────────────────────
 
-def chunk_and_index(text: str, file_name: str) -> int:
+def chunk_and_index(text: str, file_name: str, user_id: str) -> int:
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
         chunk_overlap=CHUNK_OVERLAP,
@@ -327,12 +337,12 @@ def chunk_and_index(text: str, file_name: str) -> int:
     documents = [
         Document(
             page_content=chunk,
-            metadata={"source": file_name, "chunk_index": i},
+            metadata={"source": file_name, "chunk_index": i, "user": user_id},
         )
         for i, chunk in enumerate(chunks)
     ]
     vector_store.add_documents(documents)
-    logger.info(f"Indexed {len(documents)} chunks from '{file_name}'")
+    logger.info(f"Indexed {len(documents)} chunks from '{file_name}' for user '{user_id}'")
     return len(documents)
 
 # ─────────────────────────────────────────────
@@ -379,7 +389,14 @@ Answer:"""
 # ─────────────────────────────────────────────
 
 @app.post("/upload", summary="Upload a document (PDF, TXT, DOCX, PPTX)")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(
+    file: UploadFile = File(...),
+    x_user_profile: str = Header(..., alias="X-User-Profile")
+):
+    user_id = x_user_profile.strip()
+    user_dir = UPLOAD_DIR / user_id
+    user_dir.mkdir(parents=True, exist_ok=True)
+
     file_ext = Path(file.filename).suffix.lower()
     if file_ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
@@ -387,11 +404,11 @@ async def upload_file(file: UploadFile = File(...)):
             detail=f"Unsupported file type '{file_ext}'. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
         )
 
-    save_path = UPLOAD_DIR / file.filename
+    save_path = user_dir / file.filename
     try:
         with open(save_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
-        logger.info(f"Saved: {save_path}")
+        logger.info(f"Saved: {save_path} for user {user_id}")
     except Exception as e:
         logger.error(f"Failed to save file: {e}")
         raise HTTPException(status_code=500, detail=f"File save failed: {str(e)}")
@@ -406,7 +423,7 @@ async def upload_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=422, detail=f"Text extraction failed: {str(e)}")
 
     try:
-        num_chunks = chunk_and_index(text, file.filename)
+        num_chunks = chunk_and_index(text, file.filename, user_id)
     except Exception as e:
         logger.error(f"Indexing failed: {e}")
         raise HTTPException(status_code=500, detail=f"Indexing failed: {str(e)}")
@@ -423,7 +440,13 @@ async def upload_file(file: UploadFile = File(...)):
 
 
 @app.post("/ask", response_model=AskResponse, summary="Ask a question about your documents")
-async def ask_question(payload: AskRequest):
+async def ask_question(
+    payload: AskRequest,
+    x_user_profile: str = Header(..., alias="X-User-Profile")
+):
+    user_id = x_user_profile.strip()
+    user_dir = UPLOAD_DIR / user_id
+
     """FIXED: Properly handles all error cases and returns clean answer."""
     question = payload.question.strip()
     if not question:
@@ -434,9 +457,9 @@ async def ask_question(payload: AskRequest):
 
     # Check if any documents exist first
     try:
-        if file_name and not (UPLOAD_DIR / file_name).exists():
-            raise HTTPException(status_code=404, detail=f"File '{file_name}' not found.")
-        all_docs = vector_store.get()
+        if file_name and not (user_dir / file_name).exists():
+            raise HTTPException(status_code=404, detail=f"File '{file_name}' not found for your profile.")
+        all_docs = vector_store.get(where={"user": user_id})
         if not all_docs or not all_docs.get("documents"):
             return AskResponse(
                 answer="No documents have been uploaded yet. Please upload a PDF, TXT, DOCX, or PPTX file using the sidebar first.",
@@ -448,7 +471,7 @@ async def ask_question(payload: AskRequest):
 
     # Retrieve relevant chunks
     try:
-        retriever = get_retriever(k=TOP_K_CHUNKS, file_name=file_name)
+        retriever = get_retriever(k=TOP_K_CHUNKS, file_name=file_name, user_id=user_id)
         relevant_docs = retriever.invoke(question)
     except Exception as e:
         logger.error(f"Retrieval error: {e}")
@@ -491,11 +514,16 @@ async def ask_question(payload: AskRequest):
 
 
 @app.post("/summarize", response_model=SummarizeResponse, summary="Summarize uploaded documents")
-async def summarize(payload: SummarizeRequest):
+async def summarize(
+    payload: SummarizeRequest,
+    x_user_profile: str = Header(..., alias="X-User-Profile")
+):
+    user_id = x_user_profile.strip()
+    user_dir = UPLOAD_DIR / user_id
     if payload.file_name:
-        file_path = UPLOAD_DIR / payload.file_name
+        file_path = user_dir / payload.file_name
         if not file_path.exists():
-            raise HTTPException(status_code=404, detail=f"File '{payload.file_name}' not found.")
+            raise HTTPException(status_code=404, detail=f"File '{payload.file_name}' not found for your profile.")
         try:
             text = extract_text(file_path)
         except Exception as e:
@@ -503,14 +531,14 @@ async def summarize(payload: SummarizeRequest):
         text_sample = text[:12000]
         label = payload.file_name
     else:
-        all_docs = vector_store.get()
+        all_docs = vector_store.get(where={"user": user_id})
         if not all_docs or not all_docs.get("documents"):
             raise HTTPException(
                 status_code=404,
-                detail="No documents indexed yet. Please upload a file first.",
+                detail="No documents indexed yet for your profile. Please upload a file first.",
             )
         text_sample = "\n\n".join(all_docs["documents"][:30])[:12000]
-        label = "all uploaded documents"
+        label = "all uploaded documents for your profile"
 
     prompt = f"""You are a document summarization expert.
 Provide a clear, structured, and concise summary of the following document content.
@@ -528,9 +556,13 @@ SUMMARY:"""
 
 
 @app.get("/files", summary="List all uploaded files")
-async def list_files():
+async def list_files(x_user_profile: str = Header(..., alias="X-User-Profile")):
+    user_id = x_user_profile.strip()
+    user_dir = UPLOAD_DIR / user_id
+    user_dir.mkdir(parents=True, exist_ok=True)
+    
     files = []
-    for f in sorted(UPLOAD_DIR.iterdir()):
+    for f in sorted(user_dir.iterdir()):
         if f.is_file():
             stat = f.stat()
             files.append({
@@ -543,10 +575,15 @@ async def list_files():
 
 
 @app.delete("/files/{file_name}", response_model=DeleteResponse, summary="Delete an uploaded file")
-async def delete_file(file_name: str):
-    file_path = UPLOAD_DIR / file_name
+async def delete_file(
+    file_name: str,
+    x_user_profile: str = Header(..., alias="X-User-Profile")
+):
+    user_id = x_user_profile.strip()
+    user_dir = UPLOAD_DIR / user_id
+    file_path = user_dir / file_name
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"File '{file_name}' not found.")
+        raise HTTPException(status_code=404, detail=f"File '{file_name}' not found for your profile.")
     try:
         file_path.unlink()
         logger.info(f"Deleted file: {file_name}")
@@ -569,8 +606,11 @@ async def clear_session(session_id: str):
 
 
 @app.get("/health", response_model=HealthResponse, summary="Server health check")
-async def health_check():
-    uploaded_count = sum(1 for f in UPLOAD_DIR.iterdir() if f.is_file())
+async def health_check(x_user_profile: str = Header(..., alias="X-User-Profile")):
+    user_id = x_user_profile.strip()
+    user_dir = UPLOAD_DIR / user_id
+    user_dir.mkdir(parents=True, exist_ok=True)
+    uploaded_count = sum(1 for f in user_dir.iterdir() if f.is_file())
     return HealthResponse(
         status="ok",
         provider=LLM_PROVIDER,
@@ -597,11 +637,16 @@ async def root():
 # ─────────────────────────────────────────────
 
 @app.post("/voice-overview", summary="Generate a spoken audio overview of your documents")
-async def voice_overview(payload: VoiceOverviewRequest):
+async def voice_overview(
+    payload: VoiceOverviewRequest,
+    x_user_profile: str = Header(..., alias="X-User-Profile")
+):
+    user_id = x_user_profile.strip()
+    user_dir = UPLOAD_DIR / user_id
     if payload.file_name:
-        file_path = UPLOAD_DIR / payload.file_name
+        file_path = user_dir / payload.file_name
         if not file_path.exists():
-            raise HTTPException(status_code=404, detail=f"File '{payload.file_name}' not found.")
+            raise HTTPException(status_code=404, detail=f"File '{payload.file_name}' not found for your profile.")
         try:
             text = extract_text(file_path)
         except Exception as e:
@@ -609,14 +654,14 @@ async def voice_overview(payload: VoiceOverviewRequest):
         text_sample = text[:12000]
         label = payload.file_name
     else:
-        all_docs = vector_store.get()
+        all_docs = vector_store.get(where={"user": user_id})
         if not all_docs or not all_docs.get("documents"):
             raise HTTPException(
                 status_code=404,
-                detail="No documents indexed yet. Please upload a file first.",
+                detail="No documents indexed yet for your profile. Please upload a file first.",
             )
         text_sample = "\n\n".join(all_docs["documents"][:30])[:12000]
-        label = "all uploaded documents"
+        label = "all uploaded documents for your profile"
 
     prompt = f"""You are creating a friendly spoken-audio overview for a student or professional.
 Write a clear, engaging, conversational summary of the following document content.
@@ -673,11 +718,16 @@ async def download_voice_overview(filename: str):
 # ─────────────────────────────────────────────
 
 @app.post("/concept-map", response_model=ConceptMapResponse, summary="Generate a concept map from documents")
-async def generate_concept_map(payload: ConceptMapRequest):
+async def generate_concept_map(
+    payload: ConceptMapRequest,
+    x_user_profile: str = Header(..., alias="X-User-Profile")
+):
+    user_id = x_user_profile.strip()
+    user_dir = UPLOAD_DIR / user_id
     if payload.file_name:
-        file_path = UPLOAD_DIR / payload.file_name
+        file_path = user_dir / payload.file_name
         if not file_path.exists():
-            raise HTTPException(status_code=404, detail=f"File '{payload.file_name}' not found.")
+            raise HTTPException(status_code=404, detail=f"File '{payload.file_name}' not found for your profile.")
         try:
             text = extract_text(file_path)
         except Exception as e:
@@ -685,14 +735,14 @@ async def generate_concept_map(payload: ConceptMapRequest):
         text_sample = text[:10000]
         label = payload.file_name
     else:
-        all_docs = vector_store.get()
+        all_docs = vector_store.get(where={"user": user_id})
         if not all_docs or not all_docs.get("documents"):
             raise HTTPException(
                 status_code=404,
-                detail="No documents indexed yet. Please upload a file first.",
+                detail="No documents indexed yet for your profile. Please upload a file first.",
             )
         text_sample = "\n\n".join(all_docs["documents"][:25])[:10000]
-        label = "all uploaded documents"
+        label = "all uploaded documents for your profile"
 
     output_format = (payload.output_format or "mermaid").lower()
 
@@ -787,22 +837,23 @@ def _seconds_to_label(total_seconds: int) -> str:
     return f"{s}s"
 
 
-def _detect_topic_from_docs(file_name: Optional[str] = None) -> str:
+def _detect_topic_from_docs(user_id: str, file_name: Optional[str] = None) -> str:
+    user_dir = UPLOAD_DIR / user_id
     if file_name:
-        file_path = UPLOAD_DIR / file_name
+        file_path = user_dir / file_name
         if not file_path.exists():
-            raise HTTPException(status_code=404, detail=f"File '{file_name}' not found.")
+            raise HTTPException(status_code=404, detail=f"File '{file_name}' not found for your profile.")
         try:
             text = extract_text(file_path)
         except Exception as e:
             raise HTTPException(status_code=422, detail=f"Text extraction failed: {str(e)}")
         text_sample = text[:6000]
     else:
-        all_docs = vector_store.get()
+        all_docs = vector_store.get(where={"user": user_id})
         if not all_docs or not all_docs.get("documents"):
             raise HTTPException(
                 status_code=404,
-                detail="No documents indexed yet. Provide a 'topic' directly or upload a file.",
+                detail="No documents indexed yet for your profile. Provide a 'topic' directly or upload a file.",
             )
         text_sample = "\n\n".join(all_docs["documents"][:20])[:6000]
 
@@ -825,7 +876,11 @@ SEARCH QUERY:"""
     response_model=YouTubeSearchResponse,
     summary="Find YouTube videos related to your document's topic",
 )
-async def youtube_videos(payload: YouTubeSearchRequest):
+async def youtube_videos(
+    payload: YouTubeSearchRequest,
+    x_user_profile: str = Header(..., alias="X-User-Profile")
+):
+    user_id = x_user_profile.strip()
     if not YOUTUBE_API_KEY:
         raise HTTPException(
             status_code=503,
@@ -836,7 +891,7 @@ async def youtube_videos(payload: YouTubeSearchRequest):
     if payload.topic and payload.topic.strip():
         topic = payload.topic.strip()
     else:
-        topic = _detect_topic_from_docs(payload.file_name)
+        topic = _detect_topic_from_docs(user_id, payload.file_name)
 
     sort_map = {
         "views":     "viewCount",

@@ -1,0 +1,15 @@
+name: Keep Backend Alive
+
+on:
+  schedule:
+    - cron: '*/10 * * * *' # Run every 10 minutes
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render Backend
+        run: |
+          curl -s https://mini-notebooklm-api-ccm5.onrender.com/health \
+          -H "X-User-Profile: KeepAliveBot"

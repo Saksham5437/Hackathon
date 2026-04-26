@@ -13,9 +13,15 @@ export function getApiBaseUrl() {
 }
 
 function client() {
+  const userJson = sessionStorage.getItem("mini-notebooklm:user");
+  const username = userJson ? JSON.parse(userJson).username : "anonymous";
+
   return axios.create({
     baseURL: apiBaseUrl,
     timeout: 150000,
+    headers: {
+      "X-User-Profile": username
+    }
   });
 }
 
