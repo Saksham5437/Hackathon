@@ -11,6 +11,7 @@ import shutil
 import logging
 import re
 import requests
+import json
 from pathlib import Path
 from typing import Optional, List
 from datetime import datetime
@@ -57,6 +58,34 @@ VOICE_DIR  = Path("voice_overviews")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 CHROMA_DIR.mkdir(parents=True, exist_ok=True)
 VOICE_DIR.mkdir(parents=True, exist_ok=True)
+USERS_FILE = Path("users.json")
+
+from passlib.context import CryptContext
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def load_users() -> dict:
+    if not USERS_FILE.exists():
+        return {}
+    try:
+        return json.loads(USERS_FILE.read_text())
+    except:
+        return {}
+
+def save_users(users: dict):
+    USERS_FILE.write_text(json.dumps(users, indent=2))
+
+def validate_password(password: str) -> Optional[str]:
+    if len(password) > 15:
+        return "Password must be maximum 15 characters."
+    if not any(c.isupper() for c in password):
+        return "Password must contain at least one uppercase letter."
+    if not any(c.islower() for c in password):
+        return "Password must contain at least one lowercase letter."
+    if not any(c.isdigit() for c in password):
+        return "Password must contain at least one number."
+    if not any(c in "!@#$%^&*()_+-=[]{}|;:,.<>?" for c in password):
+        return "Password must contain at least one special character."
+    return None
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
@@ -145,6 +174,10 @@ class ConceptMapResponse(BaseModel):
     concept_map: str
     output_format: str
     file_name: Optional[str] = None
+
+class AuthRequest(BaseModel):
+    username: str
+    password: str
 
 class YouTubeSearchRequest(BaseModel):
     topic: Optional[str] = None
@@ -344,6 +377,37 @@ def chunk_and_index(text: str, file_name: str, user_id: str) -> int:
     vector_store.add_documents(documents)
     logger.info(f"Indexed {len(documents)} chunks from '{file_name}' for user '{user_id}'")
     return len(documents)
+
+
+@app.post("/register", summary="Register a new user")
+async def register_user(payload: AuthRequest):
+    users = load_users()
+    username = payload.username.strip()
+    if username in users:
+        raise HTTPException(status_code=400, detail="Username already exists. Please choose another or sign in.")
+    
+    error = validate_password(payload.password)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
+    
+    hashed_pwd = pwd_context.hash(payload.password)
+    users[username] = hashed_pwd
+    save_users(users)
+    
+    return {"message": "User registered successfully.", "username": username}
+
+
+@app.post("/login", summary="Login an existing user")
+async def login_user(payload: AuthRequest):
+    users = load_users()
+    username = payload.username.strip()
+    if username not in users:
+        raise HTTPException(status_code=401, detail="Username not found. Please register first.")
+    
+    if not pwd_context.verify(payload.password, users[username]):
+        raise HTTPException(status_code=401, detail="Incorrect password. Please try again.")
+    
+    return {"message": "Login successful.", "username": username}
 
 # ─────────────────────────────────────────────
 # RAG PROMPT BUILDER

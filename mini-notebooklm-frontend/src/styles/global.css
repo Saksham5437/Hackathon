@@ -451,6 +451,35 @@ button.fileItem {
   font-weight: 800;
 }
 
+.errorBanner {
+  background: #fee2e2;
+  color: #991b1b;
+  padding: 0.75rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  font-size: 0.85rem;
+  border: 1px solid #fecaca;
+}
+
+.passwordHints {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0.5rem 0 1.5rem;
+}
+
+.hint {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.hint svg { color: #d1d5db; }
+.hint.valid { color: #059669; }
+.hint.valid svg { color: #10b981; }
+
 .sourceMeta {
   flex: 1;
   color: var(--muted);

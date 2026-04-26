@@ -26,6 +26,8 @@ function client() {
 }
 
 export const api = {
+  register: async ({ username, password }) => (await client().post("/register", { username, password })).data,
+  login: async ({ username, password }) => (await client().post("/login", { username, password })).data,
   health: async () => (await client().get("/health")).data,
   listFiles: async () => (await client().get("/files")).data,
   uploadFile: async (file, onUploadProgress) => {
