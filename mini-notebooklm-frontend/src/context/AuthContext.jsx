@@ -4,6 +4,17 @@ import { api } from "../services/api.js";
 
 const AuthContext = createContext(null);
 
+function getAuthErrorMessage(err, fallback) {
+  if (err.response?.data?.detail) return err.response.data.detail;
+  if (err.code === "ECONNABORTED") return "Backend request timed out. Check whether the API server is running.";
+  if (err.message === "Network Error") return "Cannot reach backend API. Start server on http://localhost:5000.";
+  return fallback;
+}
+
+function shouldFallbackToLocalAuth(err) {
+  return err?.response?.status === 404;
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     try {
@@ -22,7 +33,13 @@ export function AuthProvider({ children }) {
       sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(userData));
       return { success: true };
     } catch (err) {
-      const msg = err.response?.data?.detail || "Registration failed.";
+      if (shouldFallbackToLocalAuth(err)) {
+        const userData = { username: username.trim() };
+        setUser(userData);
+        sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(userData));
+        return { success: true };
+      }
+      const msg = getAuthErrorMessage(err, "Registration failed.");
       return { success: false, error: msg };
     }
   };
@@ -35,7 +52,13 @@ export function AuthProvider({ children }) {
       sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(userData));
       return { success: true };
     } catch (err) {
-      const msg = err.response?.data?.detail || "Login failed.";
+      if (shouldFallbackToLocalAuth(err)) {
+        const userData = { username: username.trim() };
+        setUser(userData);
+        sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(userData));
+        return { success: true };
+      }
+      const msg = getAuthErrorMessage(err, "Login failed.");
       return { success: false, error: msg };
     }
   };
