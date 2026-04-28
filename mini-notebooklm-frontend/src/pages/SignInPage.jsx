@@ -1,10 +1,14 @@
 import { BookOpenCheck, Check, X } from "lucide-react";
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import Button from "../components/ui/Button.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
+import { useToast } from "../context/ToastContext.jsx";
 
 export default function SignInPage() {
   const { login, register } = useAuth();
+  const { pushToast } = useToast();
+  const navigate = useNavigate();
   const [mode, setMode] = useState("signin");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -34,13 +38,25 @@ export default function SignInPage() {
       return;
     }
 
-    setLoading(loading);
+    setLoading(true);
     const action = mode === "register" ? register : login;
     const res = await action(username, password);
     setLoading(false);
 
     if (!res.success) {
+      if (mode === "register" && res.error?.toLowerCase().includes("username already exists")) {
+        setMode("signin");
+        setPassword("");
+        pushToast({
+          variant: "error",
+          title: "User already exists",
+          message: "This profile is already registered. Please log in from the sign-in page.",
+          duration: 6000,
+        });
+      }
       setError(res.error);
+    } else {
+      navigate("/");
     }
   };
 
