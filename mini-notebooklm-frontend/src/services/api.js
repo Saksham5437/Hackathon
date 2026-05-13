@@ -12,13 +12,18 @@ export function getApiBaseUrl() {
   return apiBaseUrl;
 }
 
-function client() {
+function client(timeout = 150000) {
   const userJson = sessionStorage.getItem("mini-notebooklm:user");
-  const username = userJson ? JSON.parse(userJson).username : "anonymous";
+  let username = "anonymous";
+  try {
+    username = userJson ? JSON.parse(userJson).username : "anonymous";
+  } catch {
+    sessionStorage.removeItem("mini-notebooklm:user");
+  }
 
   return axios.create({
     baseURL: apiBaseUrl,
-    timeout: 150000,
+    timeout,
     headers: {
       "X-User-Profile": username
     }
@@ -26,8 +31,8 @@ function client() {
 }
 
 export const api = {
-  register: async ({ username, password }) => (await client().post("/register", { username, password })).data,
-  login: async ({ username, password }) => (await client().post("/login", { username, password })).data,
+  register: async ({ username, password }) => (await client(10000).post("/register", { username, password })).data,
+  login: async ({ username, password }) => (await client(10000).post("/login", { username, password })).data,
   health: async () => (await client().get("/health")).data,
   listFiles: async () => (await client().get("/files")).data,
   uploadFile: async (file, onUploadProgress) => {

@@ -60,8 +60,13 @@ CHROMA_DIR.mkdir(parents=True, exist_ok=True)
 VOICE_DIR.mkdir(parents=True, exist_ok=True)
 USERS_FILE = Path("users.json")
 
-from passlib.context import CryptContext
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+import bcrypt
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+def verify_password(password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(password.encode("utf-8"), hashed_password.encode("utf-8"))
 
 def load_users() -> dict:
     if not USERS_FILE.exists():
@@ -224,14 +229,25 @@ def append_to_session(session_id: str, role: str, content: str):
 # EMBEDDINGS & VECTOR STORE
 # ─────────────────────────────────────────────
 
-logger.info(f"Loading embedding model: {EMBEDDING_MODEL}")
-embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+embeddings = None
+vector_store = None
 
-vector_store = Chroma(
-    persist_directory=str(CHROMA_DIR),
-    embedding_function=embeddings,
-    collection_name="mini_notebooklm",
-)
+def get_embeddings():
+    global embeddings
+    if embeddings is None:
+        logger.info(f"Loading embedding model: {EMBEDDING_MODEL}")
+        embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    return embeddings
+
+def get_vector_store():
+    global vector_store
+    if vector_store is None:
+        vector_store = Chroma(
+            persist_directory=str(CHROMA_DIR),
+            embedding_function=get_embeddings(),
+            collection_name="mini_notebooklm",
+        )
+    return vector_store
 
 def get_retriever(k: int = TOP_K_CHUNKS, file_name: Optional[str] = None, user_id: Optional[str] = None):
     search_kwargs = {"k": k}
@@ -247,7 +263,7 @@ def get_retriever(k: int = TOP_K_CHUNKS, file_name: Optional[str] = None, user_i
         else:
             search_kwargs["filter"] = filter_dict
             
-    return vector_store.as_retriever(search_kwargs=search_kwargs)
+    return get_vector_store().as_retriever(search_kwargs=search_kwargs)
 
 # ─────────────────────────────────────────────
 # LLM CALLER - Gemini + OpenAI
@@ -374,7 +390,7 @@ def chunk_and_index(text: str, file_name: str, user_id: str) -> int:
         )
         for i, chunk in enumerate(chunks)
     ]
-    vector_store.add_documents(documents)
+    get_vector_store().add_documents(documents)
     logger.info(f"Indexed {len(documents)} chunks from '{file_name}' for user '{user_id}'")
     return len(documents)
 
@@ -390,7 +406,7 @@ async def register_user(payload: AuthRequest):
     if error:
         raise HTTPException(status_code=400, detail=error)
     
-    hashed_pwd = pwd_context.hash(payload.password)
+    hashed_pwd = hash_password(payload.password)
     users[username] = hashed_pwd
     save_users(users)
     
@@ -404,7 +420,7 @@ async def login_user(payload: AuthRequest):
     if username not in users:
         raise HTTPException(status_code=401, detail="Username not found. Please register first.")
     
-    if not pwd_context.verify(payload.password, users[username]):
+    if not verify_password(payload.password, users[username]):
         raise HTTPException(status_code=401, detail="Incorrect password. Please try again.")
     
     return {"message": "Login successful.", "username": username}
@@ -523,7 +539,7 @@ async def ask_question(
     try:
         if file_name and not (user_dir / file_name).exists():
             raise HTTPException(status_code=404, detail=f"File '{file_name}' not found for your profile.")
-        all_docs = vector_store.get(where={"user": user_id})
+        all_docs = get_vector_store().get(where={"user": user_id})
         if not all_docs or not all_docs.get("documents"):
             return AskResponse(
                 answer="No documents have been uploaded yet. Please upload a PDF, TXT, DOCX, or PPTX file using the sidebar first.",
@@ -595,7 +611,7 @@ async def summarize(
         text_sample = text[:12000]
         label = payload.file_name
     else:
-        all_docs = vector_store.get(where={"user": user_id})
+        all_docs = get_vector_store().get(where={"user": user_id})
         if not all_docs or not all_docs.get("documents"):
             raise HTTPException(
                 status_code=404,
@@ -718,7 +734,7 @@ async def voice_overview(
         text_sample = text[:12000]
         label = payload.file_name
     else:
-        all_docs = vector_store.get(where={"user": user_id})
+        all_docs = get_vector_store().get(where={"user": user_id})
         if not all_docs or not all_docs.get("documents"):
             raise HTTPException(
                 status_code=404,
@@ -799,7 +815,7 @@ async def generate_concept_map(
         text_sample = text[:10000]
         label = payload.file_name
     else:
-        all_docs = vector_store.get(where={"user": user_id})
+        all_docs = get_vector_store().get(where={"user": user_id})
         if not all_docs or not all_docs.get("documents"):
             raise HTTPException(
                 status_code=404,
@@ -913,7 +929,7 @@ def _detect_topic_from_docs(user_id: str, file_name: Optional[str] = None) -> st
             raise HTTPException(status_code=422, detail=f"Text extraction failed: {str(e)}")
         text_sample = text[:6000]
     else:
-        all_docs = vector_store.get(where={"user": user_id})
+        all_docs = get_vector_store().get(where={"user": user_id})
         if not all_docs or not all_docs.get("documents"):
             raise HTTPException(
                 status_code=404,
